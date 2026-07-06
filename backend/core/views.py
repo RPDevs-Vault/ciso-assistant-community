@@ -11497,7 +11497,6 @@ class EvidenceFilterSet(GenericFilterSet):
             "contracts",
             "status",
             "processings",
-            "data_breaches",
         ]
 
 
