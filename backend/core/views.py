@@ -388,28 +388,17 @@ class NullableModelChoiceFilter(df.ModelMultipleChoiceFilter):
             return qs
 
         has_null = "--" in raw_values
-        real_objects = value
+        has_real = any(v != "--" for v in raw_values)
 
         filters = Q()
 
         if has_null:
             filters |= Q(**{f"{self.field_name}__isnull": True})
 
-        if real_objects:
-            filters |= Q(**{f"{self.field_name}__in": real_objects})
+        if has_real:
+            filters |= Q(**{f"{self.field_name}__in": value})
 
-        return qs.filter(filters)
-
-
-def add_unset_option(choices):
-    """Add '--' (unset) option to choices dictionary or list"""
-    # Handle both dict and list of tuples format
-    if isinstance(choices, dict):
-        # For dict format {value: label}, prepend with "--": "--"
-        return {"--": "--", **choices}
-    else:
-        # For list of tuples like [(value, label), ...]
-        return [("--", "--")] + list(choices)
+        return qs.filter(filters).distinct()
 
 
 def get_mapping_max_depth():
@@ -11508,6 +11497,7 @@ class EvidenceFilterSet(GenericFilterSet):
             "contracts",
             "status",
             "processings",
+            "data_breaches",
         ]
 
 

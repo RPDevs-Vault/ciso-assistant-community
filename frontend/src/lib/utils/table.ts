@@ -235,7 +235,7 @@ export const RISK_ASSESSMENT_STATUS_FILTER: ListViewFilterConfig = {
 		label: 'status',
 		browserCache: 'force-cache',
 		multiple: true,
-		acceptNullValue: true
+		enableDoubleDash: true
 	}
 };
 
@@ -254,7 +254,7 @@ export const QUANT_RISK_SCENARIO_STATUS_FILTER: ListViewFilterConfig = {
 		label: 'status',
 		browserCache: 'force-cache',
 		multiple: true,
-		acceptNullValue: true
+		enableDoubleDash: true
 	}
 };
 export const RISK_STAGE_FILTER: ListViewFilterConfig = {
@@ -342,7 +342,7 @@ export const RISK_TOLERANCE_FILTER: ListViewFilterConfig = {
 		label: 'withinTolerance',
 		options: YES_NO_OPTIONS,
 		multiple: false,
-		acceptNullValue: true
+		enableDoubleDash: true
 	}
 };
 
@@ -1259,7 +1259,7 @@ export const EVIDENCE_OWNER_FILTER: ListViewFilterConfig = {
 		optionsValueField: 'id',
 		optionsEndpoint: 'actors',
 		multiple: true,
-		acceptNullValue: true
+		enableDoubleDash: true
 	}
 };
 

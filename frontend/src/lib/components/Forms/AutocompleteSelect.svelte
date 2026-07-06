@@ -36,7 +36,6 @@
 		resetForm?: boolean;
 		multiple?: boolean;
 		nullable?: boolean;
-		acceptNullValue?: boolean;
 		mandatory?: boolean;
 		disabled?: boolean;
 		hidden?: boolean;
@@ -90,7 +89,6 @@
 		resetForm = false,
 		multiple = false,
 		nullable = false,
-		acceptNullValue = false,
 		mandatory = false,
 		disabled = false,
 		hidden = false,
@@ -293,7 +291,7 @@
 	const NULL_OPTION: Option = { label: '--', value: '--', translatedLabel: '--' };
 
 	$effect(() => {
-		if (acceptNullValue) {
+		if (enableDoubleDash && !optionsEndpoint) {
 			const isNullOptionMissing = options.every((option) => option.value !== '--');
 
 			if (isNullOptionMissing) {
