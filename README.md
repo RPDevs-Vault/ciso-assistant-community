@@ -57,6 +57,7 @@ We’re constantly evolving with input from users and customers. Like an octopus
 [![API Tests](https://github.com/intuitem/ciso-assistant-community/actions/workflows/backend-api-tests.yml/badge.svg)](https://github.com/intuitem/ciso-assistant-community/actions/workflows/backend-api-tests.yml)
 [![Functional Tests](https://github.com/intuitem/ciso-assistant-community/actions/workflows/functional-tests.yml/badge.svg?branch=main)](https://github.com/intuitem/ciso-assistant-community/actions/workflows/functional-tests.yml)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fab-smith%2Fciso-assistant-community.svg?type=small)](https://app.fossa.com/projects/git%2Bgithub.com%2Fab-smith%2Fciso-assistant-community?ref=badge_small)
+[![Plumber Score](https://score.getplumber.io/github.com/intuitem/ciso-assistant-community.svg)](https://score.getplumber.io/github.com/intuitem/ciso-assistant-community)
 
 ---
 
@@ -717,12 +718,12 @@ The goal of the test harness is to prevent any regression, i.e. all the tests sh
 
 To interact with the API via Swagger or directly with HTTP calls:
 
-1. Authenticate by sending a POST request to `/api/iam/login/` with your credentials in the request body. The response will include an authentication token.
+1. Create a Personal Access Token (PAT) from your user profile in the application.
 2. Include this token in the header of subsequent requests as: `Authorization: Token <token>`
 
 ⚠️ Note: use `Token`, **not** `Bearer`.
 
-When using the interactive Swagger UI, simply log in, the token will be automatically handled for subsequent requests.
+PATs respect MFA: they are issued from an authenticated session, so an account protected by MFA stays protected. For interactive/browser flows, authentication goes through the standard login (which enforces MFA when enabled).
 
 ## Setting CISO Assistant for production
 

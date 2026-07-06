@@ -78,6 +78,7 @@ from django.views.decorators.vary import vary_on_cookie
 from django.core.cache import cache
 
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from core.permissions import FeatureFlagRequired
 from core.helpers import get_instance_metrics
 from core.instance_metrics import (
     nb_users_gauge,
@@ -116,8 +117,9 @@ from django.template.loader import render_to_string
 from django.utils.functional import Promise
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from iam.models import Folder, RoleAssignment, User, UserGroup
+from iam.models import Folder, IdPGroup, RoleAssignment, User, UserGroup
 from rest_framework import filters, generics, permissions, status, viewsets
+from custom_fields.filters import CustomFieldFilterBackend, CustomFieldSearchFilter
 from django.utils.translation import gettext_lazy as _, get_language
 from rest_framework.decorators import (
     action,
@@ -203,7 +205,7 @@ from serdes.serializers import ExportSerializer
 from django.contrib.admin.utils import NestedObjects
 from django.db import router
 from global_settings.models import GlobalSettings
-from global_settings.utils import ff_is_enabled
+from global_settings.utils import ff_is_enabled, general_setting_is_enabled
 
 import structlog
 
@@ -429,10 +431,18 @@ def escape_excel_formula(value):
     s = str(value)
     if not s:
         return ""
-    stripped = s.lstrip(" \t\r\n")
+    stripped = s.lstrip()
     if stripped and stripped[0] in ("=", "+", "-", "@"):
         return "'" + s
     return s
+
+
+def escape_csv_row(row):
+    """Apply formula-injection escaping to every string cell of a CSV row."""
+    return [
+        escape_excel_formula(value) if isinstance(value, str) else value
+        for value in row
+    ]
 
 
 def create_xlsx_response(entries, filename, wrap_columns=None):
@@ -557,9 +567,10 @@ class ExportMixin:
 
         try:
             queryset = self._get_export_queryset()
-            response = HttpResponse(content_type="text/csv")
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
             filename = f"{self.export_config.get('filename', 'export')}.csv"
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            response.write("\ufeff")
 
             writer = csv.writer(response, delimiter=";")
             fields = self.export_config["fields"]
@@ -823,6 +834,51 @@ class SmartOrderingFilter(filters.OrderingFilter):
             expr = Lower(field)
             return expr.desc() if descending else expr.asc()
         return term
+
+
+PERSONAL_FOLDER_SENTINEL = "__personal__"
+
+
+def get_or_create_personal_folder(user):
+    """The user's just-in-time personal (sandbox) folder. Identity is tracked
+    write-once in the user's preferences; access is granted via a direct analyst
+    RoleAssignment scoped to the folder."""
+    from core.utils import RoleCodename
+    from iam.models import Role
+
+    prefs = dict(user.preferences or {})
+    fid = prefs.get("personal_folder")
+    if fid:
+        folder = Folder.objects.filter(
+            id=fid, content_type=Folder.ContentType.PERSONAL
+        ).first()
+        if folder:
+            return folder
+
+    gs = GlobalSettings.objects.filter(name="general").only("value").first()
+    parent_id = gs.value.get("personal_folders_parent") if gs and gs.value else None
+    parent = Folder.objects.filter(id=parent_id).first() if parent_id else None
+    if parent is None:
+        # Parent not configured: don't create a stray folder. Caller must handle None.
+        return None
+
+    with transaction.atomic():
+        folder = Folder.objects.create(
+            name=f"[PS] {(user.get_full_name() or '').strip() or user.email}",
+            content_type=Folder.ContentType.PERSONAL,
+            parent_folder=parent,
+        )
+        ra = RoleAssignment.objects.create(
+            user=user,
+            role=Role.objects.get(name=RoleCodename.ANALYST.value),
+            is_recursive=True,
+            folder=folder,
+        )
+        ra.perimeter_folders.add(folder)
+        prefs["personal_folder"] = str(folder.id)
+        user.preferences = prefs
+        user.save(update_fields=["preferences"])
+    return folder
 
 
 class BaseModelViewSet(viewsets.ModelViewSet):
@@ -1195,6 +1251,26 @@ class BaseModelViewSet(viewsets.ModelViewSet):
 
     def create(self, request: Request, *args, **kwargs) -> Response:
         self._process_request_data(request)
+        if request.data.get("folder") == PERSONAL_FOLDER_SENTINEL:
+            if not general_setting_is_enabled("personal_folders"):
+                return Response(
+                    {"folder": ["Personal domains are not enabled."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            personal = get_or_create_personal_folder(request.user)
+            if personal is None:
+                return Response(
+                    {
+                        "folder": [
+                            "Personal domains are not configured. "
+                            "Ask an administrator to set the personal domains parent."
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if hasattr(request.data, "_mutable"):
+                request.data._mutable = True
+            request.data["folder"] = str(personal.id)
         if request.data.get("filtering_labels"):
             request.data["filtering_labels"] = self._process_labels(
                 request.data["filtering_labels"]
@@ -1968,6 +2044,10 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
 
     model = Asset
     filterset_class = AssetFilter
+    filter_backends = [
+        CustomFieldSearchFilter if b is filters.SearchFilter else b
+        for b in BaseModelViewSet.filter_backends
+    ] + [CustomFieldFilterBackend]
     search_fields = ["name", "description", "ref_id", "folder__name"]
     ordering = ["folder__name", "name"]
 
@@ -1978,7 +2058,12 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
         # The list view only renders objectives + a handful of lightweight M2Ms,
         # so skip the heavier prefetches used by the detail serializer.
         if self.action == "list":
-            return qs.prefetch_related("owner", "filtering_labels", "parent_assets")
+            return qs.prefetch_related(
+                "owner",
+                "filtering_labels",
+                "parent_assets",
+                "custom_field_values__definition",
+            )
         return qs.prefetch_related(
             "parent_assets",
             "child_assets",
@@ -2038,6 +2123,8 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
         dro_obj_results = {}
         sec_cap_results = {}
         rec_cap_results = {}
+        sec_obj_cmp_results = {}
+        rec_obj_cmp_results = {}
         descendant_results = {}
 
         for asset in initial_assets:
@@ -2092,6 +2179,22 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
                 rec_cap_results[asset.id] = self._format_disaster_recovery_objectives(
                     rec_cap
                 )
+                # feed the model methods the values already computed here so they
+                # skip their per-asset graph traversal
+                sec_obj_cmp_results[asset.id] = (
+                    asset.get_security_objectives_comparison(
+                        security_objectives={"objectives": sec_obj},
+                        security_capabilities={"objectives": sec_cap},
+                    )
+                )
+                rec_obj_cmp_results[asset.id] = (
+                    asset.get_recovery_objectives_comparison(
+                        disaster_recovery_objectives={"objectives": dro_obj},
+                        recovery_capabilities={"objectives": rec_cap},
+                        display_objectives_list=dro_obj_results[asset.id],
+                        display_capabilities_list=rec_cap_results[asset.id],
+                    )
+                )
 
         optimized_data.update(
             {
@@ -2099,6 +2202,8 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
                 "disaster_recovery_objectives": dro_obj_results,
                 "security_capabilities": sec_cap_results,
                 "recovery_capabilities": rec_cap_results,
+                "security_objectives_comparison": sec_obj_cmp_results,
+                "recovery_objectives_comparison": rec_obj_cmp_results,
                 "descendants": descendant_results,
             }
         )
@@ -2161,6 +2266,33 @@ class AssetViewSet(ExportMixin, BaseModelViewSet):
         page = self.paginate_queryset(qs)
         objects = page if page is not None else qs
         serializer = AssetAutocompleteSerializer(objects, many=True)
+        data = serializer.data
+        field_models = self._get_fieldsrelated_map(serializer)
+        if field_models:
+            allowed_ids = self._get_accessible_ids_map(set(field_models.values()))
+            data = self._filter_related_fields(data, field_models, allowed_ids)
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="full")
+    def full(self, request):
+        """Full-detail read of all assets in one paginated request
+        (AssetReadSerializer), avoiding N+1 per-id detail fetches. Graph work is
+        computed once for the page via _get_optimized_object_data."""
+        from core.serializers import AssetReadSerializer
+
+        qs = self.filter_queryset(self.get_queryset()).prefetch_related(
+            "solutions", "applied_controls"
+        )
+        page = self.paginate_queryset(qs)
+        objects = page if page is not None else qs
+
+        optimized_data = self._get_optimized_object_data(objects)
+        context = self.get_serializer_context()
+        context["optimized_data"] = optimized_data
+
+        serializer = AssetReadSerializer(objects, many=True, context=context)
         data = serializer.data
         field_models = self._get_fieldsrelated_map(serializer)
         if field_models:
@@ -4034,7 +4166,8 @@ class RiskAssessmentViewSet(BaseModelViewSet):
         if UUID(pk) in object_ids_view:
             risk_assessment = self.get_object()
 
-            response = HttpResponse(content_type="text/csv")
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response.write("\ufeff")
 
             writer = csv.writer(response, delimiter=";")
             columns = [
@@ -4110,7 +4243,7 @@ class RiskAssessmentViewSet(BaseModelViewSet):
                         columns.index("inherent_level"),
                         scenario.get_inherent_risk()["name"],
                     )
-                writer.writerow(row)
+                writer.writerow(escape_csv_row(row))
 
             return response
         else:
@@ -5096,6 +5229,10 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
 
     model = AppliedControl
     filterset_class = AppliedControlFilterSet
+    filter_backends = [
+        CustomFieldSearchFilter if b is filters.SearchFilter else b
+        for b in BaseModelViewSet.filter_backends
+    ] + [CustomFieldFilterBackend]
     search_fields = ["name", "description", "ref_id"]
 
     @staticmethod
@@ -5196,10 +5333,22 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
                 "label": "labels",
                 "format": lambda qs: ",".join(lbl.label for lbl in qs.all()),
             },
+            "evidences": {
+                "source": "evidences",
+                "label": "evidences",
+                "format": lambda qs: "\n".join(str(e) for e in qs.all()),
+            },
+            "evidence_attachments": {
+                "source": "evidences",
+                "label": "evidence_attachments",
+                "format": lambda qs: "\n".join(
+                    e.filename() for e in qs.all() if e.filename()
+                ),
+            },
         },
         "filename": "audit_export",
         "select_related": ["reference_control", "folder"],
-        "prefetch_related": ["owner", "filtering_labels"],
+        "prefetch_related": ["owner", "filtering_labels", "evidences__revisions"],
     }
 
     def get_queryset(self):
@@ -5252,6 +5401,7 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
                 "owner",
                 "filtering_labels__folder",
                 "assets",
+                "custom_field_values__definition",
             )
 
         return qs.prefetch_related(
@@ -5262,6 +5412,7 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
             "objectives",  # ManyToManyField to OrganisationObjective
             "assets",  # ManyToManyField used in table
             "security_exceptions",  # Serialized as FieldsRelatedField
+            "incidents",  # Serialized as FieldsRelatedField
         )
 
     def get_serializer_class(self, **kwargs):
@@ -5281,6 +5432,33 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
         page = self.paginate_queryset(qs)
         objects = page if page is not None else qs
         serializer = AppliedControlAutocompleteSerializer(objects, many=True)
+        data = serializer.data
+        field_models = self._get_fieldsrelated_map(serializer)
+        if field_models:
+            allowed_ids = self._get_accessible_ids_map(set(field_models.values()))
+            data = self._filter_related_fields(data, field_models, allowed_ids)
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="full")
+    def full(self, request):
+        """Full-detail read of all applied controls in one paginated request
+        (AppliedControlReadSerializer), avoiding N+1 per-id detail fetches."""
+        from core.serializers import AppliedControlBulkReadSerializer
+
+        qs = self.filter_queryset(self.get_queryset()).prefetch_related(
+            "risk_scenarios"
+        )
+        page = self.paginate_queryset(qs)
+        objects = page if page is not None else qs
+
+        context = self.get_serializer_context()
+        context["daily_rate"] = GlobalSettings.get_daily_rate()
+
+        serializer = AppliedControlBulkReadSerializer(
+            objects, many=True, context=context
+        )
         data = serializer.data
         field_models = self._get_fieldsrelated_map(serializer)
         if field_models:
@@ -5410,27 +5588,27 @@ class AppliedControlViewSet(ExportMixin, BaseModelViewSet):
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get category choices")
     def category(self, request):
-        return Response(add_unset_option(dict(AppliedControl.CATEGORY)))
+        return Response(dict(AppliedControl.CATEGORY))
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get csf_function choices")
     def csf_function(self, request):
-        return Response(add_unset_option(dict(AppliedControl.CSF_FUNCTION)))
+        return Response(dict(AppliedControl.CSF_FUNCTION))
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get priority choices")
     def priority(self, request):
-        return Response(add_unset_option(dict(AppliedControl.PRIORITY)))
+        return Response(dict(AppliedControl.PRIORITY))
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get effort choices")
     def effort(self, request):
-        return Response(add_unset_option(dict(AppliedControl.EFFORT)))
+        return Response(dict(AppliedControl.EFFORT))
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get impact choices")
     def control_impact(self, request):
-        return Response(add_unset_option(dict(AppliedControl.IMPACT)))
+        return Response(dict(AppliedControl.IMPACT))
 
     @action(detail=False, name="Get all applied controls owners")
     def owner(self, request):
@@ -6252,11 +6430,7 @@ class ActionPlanBudgetOverview:
 
         # Single DB hit for daily_rate instead of N hits via ctrl.annual_cost
         _f = ActionPlanBudgetOverview._safe_float
-        general_settings = GlobalSettings.objects.filter(name="general").first()
-        daily_rate = _f(
-            general_settings.value.get("daily_rate", 500) if general_settings else 500,
-            500,
-        )
+        daily_rate = _f(GlobalSettings.get_daily_rate(), 500)
 
         currency = get_global_currency()
         fmt = lambda v: format_currency(v, currency)
@@ -7301,6 +7475,7 @@ class UserFilter(GenericFilterSet):
             "is_third_party",
             "expiry_date",
             "user_groups",
+            "idp_groups",
             "exclude_current",
             "representative__entity",
         ]
@@ -7576,10 +7751,22 @@ class UserViewSet(BaseModelViewSet):
 
     def update(self, request: Request, *args, **kwargs) -> Response:
         user = self.get_object()
-        if user.is_admin():
-            number_of_admin_users = User.get_admin_users().count()
-            admin_group = UserGroup.objects.get(name="BI-UG-ADM")
-            if number_of_admin_users == 1:
+        # This form edits DIRECT group membership only, so the guard protects the
+        # last *directly*-managed (BI-UG-ADM) administrator — the lockout-proof
+        # anchor that SCIM/IdP can never reach and that must always exist.
+        # Admins inherited via an IdP group are managed by the IdP, not here, so
+        # they neither gate this check nor count toward it.
+        # Only relevant when the request actually rewrites group membership;
+        # a partial edit that omits user_groups can't strip the admin group.
+        if (
+            "user_groups" in request.data
+            and user.user_groups.filter(name="BI-UG-ADM").exists()
+        ):
+            direct_admin_count = User.objects.filter(
+                user_groups__name="BI-UG-ADM"
+            ).count()
+            if direct_admin_count == 1:
+                admin_group = UserGroup.objects.get(name="BI-UG-ADM")
                 new_user_groups = set(request.data["user_groups"])
                 if str(admin_group.pk) not in new_user_groups:
                     return Response(
@@ -7591,9 +7778,12 @@ class UserViewSet(BaseModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
-        if user.is_admin():
-            number_of_admin_users = User.get_admin_users().count()
-            if number_of_admin_users == 1:
+        # Protect the last direct (locally-managed) administrator — see update().
+        if user.user_groups.filter(name="BI-UG-ADM").exists():
+            direct_admin_count = User.objects.filter(
+                user_groups__name="BI-UG-ADM"
+            ).count()
+            if direct_admin_count == 1:
                 return Response(
                     {"error": "attemptToDeleteOnlyAdminAccountError"},
                     status=status.HTTP_403_FORBIDDEN,
@@ -7748,6 +7938,20 @@ class UserGroupViewSet(BaseModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
+
+
+class IdPGroupViewSet(BaseModelViewSet):
+    """
+    API endpoint that allows IdP groups to be viewed or edited
+    """
+
+    model = IdPGroup
+    feature_flag = "idp_groups"
+    ordering_fields = ["name"]
+    search_fields = ["name"]
+
+    def get_permissions(self):
+        return super().get_permissions() + [FeatureFlagRequired()]
 
 
 class RoleAssignmentViewSet(BaseModelViewSet):
@@ -8245,6 +8449,35 @@ class UserPreferencesView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             prefs["date_format"] = new_date_format
+
+        if "ui" in request.data:
+            new_ui = request.data.get("ui")
+            if not isinstance(new_ui, dict):
+                return Response(
+                    {"error": "UI preferences must be an object."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            ui_prefs = prefs.get("ui") if isinstance(prefs.get("ui"), dict) else {}
+            if "theme" in new_ui:
+                new_theme = new_ui.get("theme")
+                if new_theme not in ("light", "dark", "system"):
+                    logger.error(
+                        f"Error in UserPreferencesView: theme={new_theme} available themes=['light', 'dark', 'system']"
+                    )
+                    return Response(
+                        {"error": "This theme doesn't exist."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                ui_prefs["theme"] = new_theme
+            if "landing" in new_ui:
+                new_landing = new_ui.get("landing")
+                if new_landing not in ("", "analytics", "respondent", "portal"):
+                    return Response(
+                        {"error": "This landing doesn't exist."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                ui_prefs["landing"] = new_landing
+            prefs["ui"] = ui_prefs
 
         request.user.preferences = prefs
         request.user.save(update_fields=["preferences"])
@@ -8888,7 +9121,7 @@ class FrameworkViewSet(BaseModelViewSet):
                     "min_score": framework.min_score,
                     "max_score": framework.max_score,
                     "scores_definition": framework.scores_definition,
-                    "implementation_groups_definition": framework.implementation_groups_definition,
+                    "implementation_groups_definition": framework.get_implementation_groups_definition_translated(),
                     "sections": sections,
                 },
                 "rows": rows,
@@ -9434,6 +9667,8 @@ class FrameworkViewSet(BaseModelViewSet):
                 "ref_id": rn.ref_id,
                 "name": rn.get_name_translated,
                 "description": rn.get_description_translated,
+                "typical_evidence": rn.get_typical_evidence_translated,
+                "annotation": rn.get_annotation_translated,
                 "compliance_result": "",
                 "requirement_progress": "",
                 "score": "",
@@ -9482,7 +9717,14 @@ class FrameworkViewSet(BaseModelViewSet):
             # Get the worksheet
             worksheet = writer.sheets["Sheet1"]
 
-            wrap_columns = ["name", "description", "observations", "answers"]
+            wrap_columns = [
+                "name",
+                "description",
+                "typical_evidence",
+                "annotation",
+                "observations",
+                "answers",
+            ]
 
             wrap_indices = [
                 df.columns.get_loc(col) + 1 for col in wrap_columns if col in df.columns
@@ -12881,7 +13123,9 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 ),
                 Prefetch(
                     "validationflow_set",
-                    queryset=ValidationFlow.objects.select_related("approver"),
+                    queryset=ValidationFlow.objects.select_related(
+                        "approver"
+                    ).prefetch_related("events"),
                 ),
             )
         # Custom detail actions (tree, global_score, donut_data, etc.)
@@ -12977,8 +13221,9 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
 
     @action(detail=True, name="Get compliance assessment (audit) CSV")
     def compliance_assessment_csv(self, request, pk):
-        response = HttpResponse(content_type="text/csv")
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = 'attachment; filename="audit_export.csv"'
+        response.write("\ufeff")
 
         (viewable_objects, _, _) = RoleAssignment.get_accessible_object_ids(
             Folder.get_root_folder(), request.user, ComplianceAssessment
@@ -12991,6 +13236,8 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 "ref_id",
                 "name",
                 "description",
+                "typical_evidence",
+                "annotation",
                 "compliance_result",
                 "extended_result",
                 "requirement_progress",
@@ -13015,6 +13262,8 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                     req_node.ref_id,
                     req_node.get_name_translated,
                     req_node.get_description_translated,
+                    req_node.get_typical_evidence_translated,
+                    req_node.get_annotation_translated,
                 ]
                 if req_node.assessable:
                     row += [
@@ -13026,7 +13275,7 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                     ]
                 else:
                     row += ["", "", "", "", ""]
-                writer.writerow(row)
+                writer.writerow(escape_csv_row(row))
 
             return response
         else:
@@ -13080,6 +13329,10 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 "description": escape_excel_formula(
                     req_node.get_description_translated
                 ),
+                "typical_evidence": escape_excel_formula(
+                    req_node.get_typical_evidence_translated
+                ),
+                "annotation": escape_excel_formula(req_node.get_annotation_translated),
                 "compliance_result": req.result,
                 "extended_result": req.extended_result,
                 "requirement_progress": req.status,
@@ -13156,7 +13409,14 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
             df.to_excel(writer, index=False)
             worksheet = writer.sheets["Sheet1"]
 
-            wrap_columns = ["name", "description", "observations", "answers"]
+            wrap_columns = [
+                "name",
+                "description",
+                "typical_evidence",
+                "annotation",
+                "observations",
+                "answers",
+            ]
             wrap_indices = [
                 df.columns.get_loc(col) + 1 for col in wrap_columns if col in df.columns
             ]
@@ -13360,17 +13620,22 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
         requirement_assessments = compliance_assessment.get_requirement_assessments(
             include_non_assessable=False
         )
-        queryset = AppliedControl.objects.filter(
-            requirement_assessments__in=requirement_assessments
-        ).distinct()
+        queryset = (
+            AppliedControl.objects.filter(
+                requirement_assessments__in=requirement_assessments
+            )
+            .prefetch_related("evidences__revisions")
+            .distinct()
+        )
 
         # Use the same serializer to maintain consistency - to review
         serializer = ComplianceAssessmentActionPlanSerializer(
             queryset, many=True, context={"pk": pk}
         )
 
-        response = HttpResponse(content_type="text/csv")
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="action_plan_{pk}.csv"'
+        response.write("\ufeff")
 
         writer = csv.writer(response)
 
@@ -13388,27 +13653,42 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 "Impact",
                 "Cost",
                 "Covered requirements",
+                "Associated evidences",
+                "Evidence attachments",
             ]
         )
 
         for item in serializer.data:
             writer.writerow(
-                [
-                    item.get("name"),
-                    item.get("description"),
-                    item.get("category"),
-                    item.get("csf_function"),
-                    item.get("priority"),
-                    item.get("status"),
-                    item.get("eta"),
-                    item.get("expiry_date"),
-                    item.get("effort"),
-                    item.get("control_impact"),
-                    item.get("annual_cost"),
-                    "\n".join(
-                        [ra.get("str") for ra in item.get("requirement_assessments")]
-                    ),
-                ]
+                escape_csv_row(
+                    [
+                        item.get("name"),
+                        item.get("description"),
+                        item.get("category"),
+                        item.get("csf_function"),
+                        item.get("priority"),
+                        item.get("status"),
+                        item.get("eta"),
+                        item.get("expiry_date"),
+                        item.get("effort"),
+                        item.get("control_impact"),
+                        item.get("annual_cost"),
+                        "\n".join(
+                            escape_excel_formula(ra.get("str"))
+                            for ra in (item.get("requirement_assessments") or [])
+                        ),
+                        "\n".join(
+                            escape_excel_formula(evidence.get("str"))
+                            for evidence in (item.get("evidences") or [])
+                            if evidence.get("str")
+                        ),
+                        "\n".join(
+                            escape_excel_formula(evidence.get("filename"))
+                            for evidence in (item.get("evidence_attachments") or [])
+                            if evidence.get("filename")
+                        ),
+                    ]
+                )
             )
 
         return response
@@ -13426,9 +13706,13 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
         requirement_assessments = compliance_assessment.get_requirement_assessments(
             include_non_assessable=False
         )
-        queryset = AppliedControl.objects.filter(
-            requirement_assessments__in=requirement_assessments
-        ).distinct()
+        queryset = (
+            AppliedControl.objects.filter(
+                requirement_assessments__in=requirement_assessments
+            )
+            .prefetch_related("evidences__revisions")
+            .distinct()
+        )
 
         serializer = ComplianceAssessmentActionPlanSerializer(
             queryset, many=True, context={"pk": pk}
@@ -13449,7 +13733,18 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 "impact": item.get("control_impact"),
                 "cost": item.get("annual_cost"),
                 "covered_requirements": "\n".join(
-                    [ra.get("str") for ra in item.get("requirement_assessments")]
+                    escape_excel_formula(ra.get("str"))
+                    for ra in (item.get("requirement_assessments") or [])
+                ),
+                "associated_evidences": "\n".join(
+                    escape_excel_formula(evidence.get("str"))
+                    for evidence in (item.get("evidences") or [])
+                    if evidence.get("str")
+                ),
+                "evidence_attachments": "\n".join(
+                    escape_excel_formula(evidence.get("filename"))
+                    for evidence in (item.get("evidence_attachments") or [])
+                    if evidence.get("filename")
                 ),
             }
             entries.append(entry)
@@ -13461,7 +13756,13 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
             df.to_excel(writer, index=False)
             worksheet = writer.sheets["Sheet1"]
 
-            wrap_columns = ["name", "description", "covered_requirements"]
+            wrap_columns = [
+                "name",
+                "description",
+                "covered_requirements",
+                "associated_evidences",
+                "evidence_attachments",
+            ]
             wrap_indices = [
                 df.columns.get_loc(col) + 1 for col in wrap_columns if col in df.columns
             ]
@@ -13880,6 +14181,15 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 # Create applied controls in bulk for each assessment
                 for requirement_assessment in assessments:
                     requirement_assessment.create_applied_controls_from_suggestions()
+
+            # For dynamic frameworks, reconcile manual IGs with the answer-driven
+            # calc once RAs (and any baseline-copied answers) exist. Baseline copy
+            # uses bulk_create which bypasses Answer.save(), so the deferred IG
+            # hook never fires — run it explicitly here.
+            if instance.framework and instance.framework.is_dynamic():
+                from core.utils import update_selected_implementation_groups
+
+                update_selected_implementation_groups(instance)
 
     def perform_update(self, serializer):
         compliance_assessment = serializer.save()
@@ -14357,7 +14667,7 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                         "id": str(_framework.id),
                         "name": _framework.name,
                         "ref_id": _framework.ref_id or "",
-                        "implementation_groups_definition": _framework.implementation_groups_definition,
+                        "implementation_groups_definition": _framework.get_implementation_groups_definition_translated(),
                     },
                     "risk_assessments": risk_assessment_names,
                     "selected_implementation_groups": list(effective_groups)
@@ -15893,7 +16203,7 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
         compliance_assessment = self.get_object()
         framework = compliance_assessment.framework
 
-        ig_definition = framework.implementation_groups_definition
+        ig_definition = framework.get_implementation_groups_definition_translated()
         if not ig_definition:
             return Response({"groups": []})
 
@@ -16237,6 +16547,8 @@ class RequirementMappingSetViewSet(BaseModelViewSet):
         "provider",
     ]
 
+    search_fields = ["name", "provider"]
+
     def get_serializer_class(self, **kwargs):
         return RequirementMappingSetReadSerializer
 
@@ -16249,6 +16561,43 @@ class RequirementMappingSetViewSet(BaseModelViewSet):
                 | Q(content__requirement_mapping_sets__isnull=False)
             )
         )
+
+    def _get_optimized_object_data(self, queryset):
+        """Batch-resolve source/target framework names for the page.
+
+        Names are read from each framework's library content so they resolve
+        whether or not the framework has been imported, in a single query.
+        """
+        optimized_data = super()._get_optimized_object_data(queryset)
+
+        framework_urns = set()
+        for obj in queryset:
+            rms_list = obj.content.get(
+                "requirement_mapping_sets",
+                [obj.content.get("requirement_mapping_set", {})],
+            )
+            mapping_set = rms_list[0] if rms_list else {}
+            for key in ("source_framework_urn", "target_framework_urn"):
+                urn = mapping_set.get(key)
+                if urn:
+                    framework_urns.add(urn)
+
+        framework_map = {}
+        if framework_urns:
+            # Extract only the urn/name pair in the DB so the (potentially large)
+            # framework content blob is never loaded into Python.
+            rows = StoredLibrary.objects.filter(
+                content__framework__urn__in=framework_urns,
+                content__framework__isnull=False,
+                content__requirement_mapping_set__isnull=True,
+                content__requirement_mapping_sets__isnull=True,
+            ).values_list("content__framework__urn", "content__framework__name")
+            for urn, name in rows:
+                if urn:
+                    framework_map[urn] = name or urn
+
+        optimized_data["framework_map"] = framework_map
+        return optimized_data
 
     @action(detail=False, name="Get provider choices")
     def provider(self, request):
@@ -16749,8 +17098,9 @@ def generate_html(
 
 
 def export_mp_csv(request):
-    response = HttpResponse(content_type="text/csv")
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = 'attachment; filename="MP.csv"'
+    response.write("\ufeff")
 
     writer = csv.writer(response, delimiter=";")
     columns = [
@@ -16783,16 +17133,16 @@ def export_mp_csv(request):
             mtg.description,
             mtg.category,
             mtg.csf_function,
-            mtg.priority,
             mtg.reference_control,
             mtg.eta,
+            mtg.priority,
             mtg.effort,
             mtg.control_impact,
             mtg.annual_cost,
             mtg.link,
             mtg.status,
         ]
-        writer.writerow(row)
+        writer.writerow(escape_csv_row(row))
 
     return response
 
@@ -16877,6 +17227,12 @@ class SecurityExceptionViewSet(ExportMixin, BaseModelViewSet):
                 "risk_scenarios",
                 "requirement_assessments",
                 "owners",
+                Prefetch(
+                    "validationflow_set",
+                    queryset=ValidationFlow.objects.select_related(
+                        "approver"
+                    ).prefetch_related("events"),
+                ),
             )
         )
 
@@ -19218,10 +19574,13 @@ class TaskNodeViewSet(BaseModelViewSet):
         detail=True, name="Remove/Move evidence to expected evidence", methods=["post"]
     )
     def remove_evidence(self, request, pk):
-        task_node = TaskNode.objects.get(id=pk)
+        task_node = self.get_object()
         evidence_id = request.data.get("evidence_id")
         to_move = request.data.get("move", False)
-        evidence = Evidence.objects.get(id=evidence_id)
+        accessible_evidence_ids = RoleAssignment.get_accessible_object_ids(
+            Folder.get_root_folder(), request.user, Evidence
+        )[0]
+        evidence = Evidence.objects.get(id=evidence_id, id__in=accessible_evidence_ids)
         task_node.evidences.remove(evidence)
         if to_move:
             task_node.task_template.evidences.add(evidence)
