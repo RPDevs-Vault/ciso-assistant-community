@@ -181,6 +181,7 @@
 	"autoSync": "Automatická denní synchronizace s akcemi",
 	"autoSyncHelpText": "Je-li povoleno, úkol bude automaticky synchronizovat akce na denní bázi. Uzamčená hodnocení se přeskakují.",
 	"clearFocus": "Vymazat zaměření",
+	"actionBlockedByFocus": "To může být způsobeno aktivním zaměřením. Vymažte zaměření a zkuste to znovu.",
 	"noDomainsAvailable": "Žádné domény nejsou k dispozici",
 	"urn": "URN",
 	"treatmentStatus": "Rozhodnutí o zvládání rizika",

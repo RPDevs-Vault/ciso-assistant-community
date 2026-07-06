@@ -188,6 +188,7 @@
 	"autoSync": "Automatska dnevna sinkronizacija s akcijama",
 	"autoSyncHelpText": "Kada je uključeno, zadatak će automatski sinkronizirati akcije dnevno. Zaključane procjene se preskakaju.",
 	"clearFocus": "Obriši fokus",
+	"actionBlockedByFocus": "To može biti zbog aktivnog fokusa. Obrišite fokus i pokušajte ponovno.",
 	"noDomainsAvailable": "Nema dostupnih domena",
 	"urn": "URN",
 	"treatmentStatus": "Status rješavanja",

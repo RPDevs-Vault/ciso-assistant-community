@@ -275,6 +275,7 @@
 	"objectNotReachableFromCurrentFocus": "This object is not reachable from the current focus. Redirecting to the list view.",
 	"objectNotFound": "Object not found. Redirecting to the list view.",
 	"clearFocus": "Clear focus",
+	"actionBlockedByFocus": "This may be due to the active focus. Clear focus and try again.",
 	"noDomainsAvailable": "No domains available",
 	"enclave": "Enclave",
 	"includeEnclaves": "Include enclaves",

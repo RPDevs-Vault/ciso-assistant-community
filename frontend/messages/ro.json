@@ -183,6 +183,7 @@
 	"autoSync": "Sincronizare automată zilnică cu acțiuni",
 	"autoSyncHelpText": "Când este activat, o sarcină va sincroniza automat acțiunile zilnic. Evaluările blocate sunt sărite.",
 	"clearFocus": "Ștergeți focalizarea",
+	"actionBlockedByFocus": "Acest lucru se poate datora focalizării active. Ștergeți focalizarea și încercați din nou.",
 	"noDomainsAvailable": "Niciun domeniu disponibil",
 	"urn": "URN",
 	"treatmentStatus": "Stare tratament",

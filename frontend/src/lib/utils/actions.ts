@@ -79,8 +79,18 @@ export async function handleErrorResponse({
 		return message(form, { warning: res.warning });
 	}
 	if (res.error || res.detail) {
+		// A 403 while focus mode is active may be the focus veto on a
+		// root-scoped action: append a hint to the raw denial
+		const focusModeEnabled = event.locals.featureflags?.focus_mode ?? false;
+		const isFocusDenial =
+			response.status === 403 && focusModeEnabled && Boolean(event.cookies.get('focus_folder_id'));
+		const errorMessage = safeTranslate(res.error || res.detail);
 		setFlash(
-			{ type: 'error', message: safeTranslate(res.error || res.detail), timeout: 10000 },
+			{
+				type: 'error',
+				message: isFocusDenial ? `${errorMessage} ${m.actionBlockedByFocus()}` : errorMessage,
+				timeout: 10000
+			},
 			event
 		);
 		return message(form, { error: res.error || res.detail });

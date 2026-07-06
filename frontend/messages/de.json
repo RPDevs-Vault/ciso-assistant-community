@@ -149,6 +149,7 @@
 	"autoSync": "Automatische tägliche Synchronisierung mit Maßnahmen",
 	"autoSyncHelpText": "Wenn aktiviert, synchronisiert eine Bewertung automatisch täglich mit Maßnahmen. Gesperrte Bewertungen werden übersprungen.",
 	"clearFocus": "Fokus löschen",
+	"actionBlockedByFocus": "Dies kann am aktiven Fokus liegen. Löschen Sie den Fokus und versuchen Sie es erneut.",
 	"noDomainsAvailable": "Keine Bereiche verfügbar",
 	"urn": "URN",
 	"treatmentStatus": "Behandlungsstatus",

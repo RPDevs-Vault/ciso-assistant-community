@@ -1028,11 +1028,16 @@ class User(ActorSyncMixin, AbstractBaseUser, AbstractBaseModel, FolderMixin):
 
     @classmethod
     def get_editors(cls) -> List["User"]:
-        return [
-            user
-            for user in cls.objects.all()
-            if user.is_editor and not user.is_third_party
-        ]
+        # License accounting is global, even when the current request is focused on a domain.
+        token = focus_folder_id_var.set(None)
+        try:
+            return [
+                user
+                for user in cls.objects.filter(is_third_party=False)
+                if user.is_editor
+            ]
+        finally:
+            focus_folder_id_var.reset(token)
 
     @property
     def is_sso(self) -> bool:
@@ -1522,20 +1527,45 @@ class RoleAssignment(NameDescriptionMixin, FolderMixin):
         roles_state = get_roles_state()
         permissions_codes: set[str] = set()
 
+        # Focus mode: only advertise permissions from assignments whose
+        # perimeter reaches into the focus subtree
+        focus_folder_id = focus_folder_id_var.get()
+        focus_ids: Optional[Set[uuid.UUID]] = None
+        if focus_folder_id:
+            state = get_folder_state()
+            focus_ids = set(
+                iter_descendant_ids(state, focus_folder_id, include_start=True)
+            )
+
+        def assignment_in_focus(a: "AssignmentLite") -> bool:
+            if focus_ids is None:
+                return True
+            perimeter: Set[uuid.UUID] = set(a.perimeter_folder_ids)
+            if a.is_recursive:
+                expanded: Set[uuid.UUID] = set()
+                for pf_id in perimeter:
+                    expanded.update(
+                        iter_descendant_ids(state, pf_id, include_start=True)
+                    )
+                perimeter = expanded
+            return bool(perimeter & focus_ids)
+
         # --- UserGroup principal: assignments come from "by_group" cache only
         if isinstance(principal, UserGroup):
             assignments_state = get_assignments_state()
             for a in assignments_state.by_group.get(principal.id, ()):
-                permissions_codes.update(
-                    roles_state.role_permissions.get(a.role_id, frozenset())
-                )
+                if assignment_in_focus(a):
+                    permissions_codes.update(
+                        roles_state.role_permissions.get(a.role_id, frozenset())
+                    )
 
         # --- User principal: assignments come from helper (user + via groups)
         else:
             for a in _iter_assignment_lites_for_user(principal):
-                permissions_codes.update(
-                    roles_state.role_permissions.get(a.role_id, frozenset())
-                )
+                if assignment_in_focus(a):
+                    permissions_codes.update(
+                        roles_state.role_permissions.get(a.role_id, frozenset())
+                    )
 
         if not permissions_codes:
             return {}
@@ -1574,6 +1604,20 @@ class RoleAssignment(NameDescriptionMixin, FolderMixin):
         roles_state = get_roles_state()
         perms_by_folder: dict[str, set[str]] = defaultdict(set)
 
+        def filter_by_focus(perms: dict[str, set[str]]) -> dict[str, set[str]]:
+            # Focus mode: drop folders outside the focus subtree so the
+            # advertised per-folder permissions match what is enforced
+            focus_folder_id = focus_folder_id_var.get()
+            if not focus_folder_id:
+                return perms
+            focus_ids = {
+                str(f_id)
+                for f_id in iter_descendant_ids(
+                    state, focus_folder_id, include_start=True
+                )
+            }
+            return {k: v for k, v in perms.items() if k in focus_ids}
+
         def apply_assignment(a):
             role_perm_codenames = roles_state.role_permissions.get(
                 a.role_id, frozenset()
@@ -1595,13 +1639,13 @@ class RoleAssignment(NameDescriptionMixin, FolderMixin):
             assignments_state = get_assignments_state()
             for a in assignments_state.by_group.get(principal.id, ()):
                 apply_assignment(a)
-            return perms_by_folder
+            return filter_by_focus(perms_by_folder)
 
         # --- User principal (user + via groups)
         for a in _iter_assignment_lites_for_user(principal):
             apply_assignment(a)
 
-        return perms_by_folder
+        return filter_by_focus(perms_by_folder)
 
 
 @dataclass(frozen=True, slots=True)

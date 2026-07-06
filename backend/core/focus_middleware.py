@@ -17,7 +17,6 @@ logger = structlog.getLogger(__name__)
 
 # Allowlist of endpoints exempt from focus mode
 FOCUS_MODE_EXEMPT_PATHS = [
-    "/api/iam/current-user/",
     "/api/csrf/",
     "/api/_allauth/",
     "/api/build/",

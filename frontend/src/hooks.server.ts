@@ -135,12 +135,20 @@ async function validateUserSession(event: RequestEvent): Promise<User | null> {
 	const allauthSessionToken = event.cookies.get('allauth_session_token');
 	if (!allauthSessionToken) logoutUser(event);
 
+	// Plain fetch bypasses handleFetch, so the focus header must be set here.
+	// The backend middleware ignores it when the focus_mode feature flag is off.
+	const headers: Record<string, string> = {
+		'content-type': 'application/json',
+		Authorization: `Token ${token}`
+	};
+	const focusFolderId = event.cookies.get('focus_folder_id');
+	if (focusFolderId) {
+		headers['X-Focus-Folder-Id'] = focusFolderId;
+	}
+
 	const res = await fetch(`${BASE_API_URL}/iam/current-user/`, {
 		credentials: 'include',
-		headers: {
-			'content-type': 'application/json',
-			Authorization: `Token ${token}`
-		}
+		headers
 	});
 
 	if (!res.ok) logoutUser(event);

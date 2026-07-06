@@ -183,6 +183,7 @@
 	"autoSync": "Automatikus napi szinkronizálás a műveletekkel",
 	"autoSyncHelpText": "Ha engedélyezve van, a feladatok automatikusan szinkronizálódnak a műveletekkel napi rendszereséggel. A zárolt értékelések kihagyásra kerülnek.",
 	"clearFocus": "Fókusz törlése",
+	"actionBlockedByFocus": "Ennek oka az aktív fókusz lehet. Törölje a fókuszt, és próbálja újra.",
 	"noDomainsAvailable": "Nincsenek elérhető tartományok",
 	"urn": "URN",
 	"treatmentStatus": "Kockázat kezelésének módja",

@@ -272,6 +272,7 @@
 	"objectNotReachableFromCurrentFocus": "Šis objektas nepasiekiamas iš dabartinio fokuso. Nukreipiama į sąrašo rodinį.",
 	"objectNotFound": "Objektas nerastas. Nukreipiama į sąrašo rodinį.",
 	"clearFocus": "Išvalyti fokusą",
+	"actionBlockedByFocus": "Tai gali būti dėl aktyvaus fokuso. Išvalykite fokusą ir bandykite dar kartą.",
 	"noDomainsAvailable": "Nėra galimų sričių",
 	"enclave": "Anklavas",
 	"includeEnclaves": "Įtraukti anklavus",

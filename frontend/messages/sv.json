@@ -184,6 +184,7 @@
 	"autoSync": "Automatisk daglig synkronisering till åtgärder",
 	"autoSyncHelpText": "När det är aktiverat kommer en uppgift automatiskt att utföra daglig synkronisering till åtgärder. Låsta bedömningar hoppas över.",
 	"clearFocus": "Rensa fokus",
+	"actionBlockedByFocus": "Detta kan bero på det aktiva fokuset. Rensa fokus och försök igen.",
 	"noDomainsAvailable": "Inga domäner tillgängliga",
 	"urn": "URN",
 	"treatmentStatus": "Behandlingsstatus",

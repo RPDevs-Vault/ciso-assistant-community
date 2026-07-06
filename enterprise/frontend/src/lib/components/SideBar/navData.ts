@@ -122,7 +122,8 @@ export const navData = {
 				{
 					name: 'users',
 					fa_icon: 'fa-solid fa-user',
-					href: '/users'
+					href: '/users',
+					scope: 'global'
 				},
 				{
 					name: 'teams',
@@ -137,13 +138,15 @@ export const navData = {
 				{
 					name: 'idpGroups',
 					fa_icon: 'fa-solid fa-id-badge',
-					href: '/idp-groups'
+					href: '/idp-groups',
+					scope: 'global'
 				},
 				{
 					name: 'roles',
 					fa_icon: 'fa-solid fa-shield-halved',
 					href: '/roles',
-					permissions: ['add_role']
+					permissions: ['add_role'],
+					scope: 'global'
 				},
 				{
 					name: 'roleAssignments',
@@ -252,7 +255,8 @@ export const navData = {
 					name: 'libraries',
 					fa_icon: 'fa-solid fa-folder-plus',
 					href: '/libraries',
-					permissions: ['add_threat', 'add_riskmatrix', 'add_referencecontrol', 'add_framework']
+					permissions: ['add_threat', 'add_riskmatrix', 'add_referencecontrol', 'add_framework'],
+					scope: 'global'
 				},
 				{
 					name: 'policies',
@@ -521,7 +525,8 @@ export const navData = {
 					name: 'settings',
 					fa_icon: 'fa-solid fa-cog',
 					href: '/settings',
-					permissions: ['change_globalsettings']
+					permissions: ['change_globalsettings'],
+					scope: 'global'
 				},
 				{
 					name: 'dataWizard',
@@ -533,7 +538,8 @@ export const navData = {
 					name: 'backupRestore',
 					fa_icon: 'fa-solid fa-floppy-disk',
 					href: '/backup-restore',
-					permissions: ['backup']
+					permissions: ['backup'],
+					scope: 'global'
 				},
 				{
 					name: 'Audit log',
@@ -545,7 +551,8 @@ export const navData = {
 					name: 'experimental',
 					fa_icon: 'fa-solid fa-flask',
 					href: '/experimental',
-					permissions: ['change_globalsettings']
+					permissions: ['change_globalsettings'],
+					scope: 'global'
 				},
 				{
 					name: 'managePortals',

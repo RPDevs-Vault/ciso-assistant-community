@@ -236,6 +236,7 @@
 	"autoSync": "自动日常同步到操作",
 	"autoSyncHelpText": "启用后，任务将每天自动同步到操作。锁定的评估被跳过。",
 	"clearFocus": "清除焦点",
+	"actionBlockedByFocus": "这可能是由于当前的焦点所致。请清除焦点后重试。",
 	"noDomainsAvailable": "没有可用的域",
 	"urn": "URN",
 	"treatmentStatus": "处置决策",

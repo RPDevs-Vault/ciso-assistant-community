@@ -25,6 +25,7 @@ export interface User {
 	accessible_domains: string[];
 	domain_permissions: Record<string, string[]>;
 	root_folder_id: string;
+	focus_folder_id: string | null;
 	preferences: {
 		lang?: string;
 	};

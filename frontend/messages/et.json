@@ -347,6 +347,7 @@
 	"objectNotReachableFromCurrentFocus": "See objekt pole praegusest fookusest kättesaadav. Suunatakse loendivaatesse.",
 	"objectNotFound": "Objekti ei leitud. Suunatakse loendivaatesse.",
 	"clearFocus": "Eemalda fookus",
+	"actionBlockedByFocus": "See võib olla tingitud aktiivsest fookusest. Eemaldage fookus ja proovige uuesti.",
 	"noDomainsAvailable": "Valdkonnad puuduvad",
 	"enclave": "Enklaav",
 	"includeEnclaves": "Kaasa enklaavid",

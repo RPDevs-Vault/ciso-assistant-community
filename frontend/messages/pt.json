@@ -183,6 +183,7 @@
 	"autoSync": "Sincronização automática diária para ações",
 	"autoSyncHelpText": "Quando ativado, uma tarefa sincronizará automaticamente as ações diariamente. Avaliações bloqueadas são ignoradas.",
 	"clearFocus": "Limpar foco",
+	"actionBlockedByFocus": "Isso pode ser devido ao foco ativo. Limpe o foco e tente novamente.",
 	"noDomainsAvailable": "Nenhum domínio disponível",
 	"urn": "URN",
 	"treatmentStatus": "Status de tratamento",

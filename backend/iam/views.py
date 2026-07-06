@@ -28,6 +28,7 @@ from rest_framework.status import (
 from django.conf import settings
 
 from global_settings.models import GlobalSettings
+from core.context import focus_folder_id_var
 from core.models import Actor
 from .models import Folder, PersonalAccessToken, RoleAssignment, SCIMToken
 from core.permissions import IsGlobalAdmin, FeatureFlagRequired
@@ -222,6 +223,10 @@ class CurrentUserView(views.APIView):
             k: list(v) for k, v in domain_permissions.items()
         }  # this what matters
 
+        # Echoed back so the frontend can tell that the permissions above are
+        # focus-scoped, atomically with the payload (no cookie/store skew)
+        focus_folder_id = focus_folder_id_var.get()
+
         res_data = {
             "id": request.user.id,
             "actor_id": request.user.actor.id,
@@ -242,6 +247,7 @@ class CurrentUserView(views.APIView):
             "accessible_domains": [str(f) for f in accessible_domains],
             "domain_permissions": domain_permissions,
             "root_folder_id": Folder.get_root_folder().id,
+            "focus_folder_id": str(focus_folder_id) if focus_folder_id else None,
             "preferences": request.user.preferences,
             "has_mfa_enabled": request.user.has_mfa_enabled(),
             "is_superuser": request.user.is_superuser,

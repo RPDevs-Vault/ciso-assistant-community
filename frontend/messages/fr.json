@@ -264,6 +264,7 @@
 	"objectNotReachableFromCurrentFocus": "Cet objet n'est pas accessible depuis le focus actuel. Redirection vers la vue liste.",
 	"objectNotFound": "Objet introuvable. Redirection vers la vue liste.",
 	"clearFocus": "Effacer le focus",
+	"actionBlockedByFocus": "Cela peut être dû au focus actif. Effacez le focus et réessayez.",
 	"noDomainsAvailable": "Aucun domaine disponible",
 	"enclave": "Enclave",
 	"includeEnclaves": "Inclure les enclaves",

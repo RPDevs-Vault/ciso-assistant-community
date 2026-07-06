@@ -181,6 +181,7 @@
 	"autoSync": "Automatisk daglig synkronisering med handlinger",
 	"autoSyncHelpText": "Når det er aktiveret, vil en opgave automatisk udføre synkronisering med handlinger på daglig basis. Låste vurderinger springes over.",
 	"clearFocus": "Ryd fokus",
+	"actionBlockedByFocus": "Dette kan skyldes det aktive fokus. Ryd fokus og prøv igen.",
 	"noDomainsAvailable": "Ingen domæner tilgængelige",
 	"urn": "URN",
 	"treatmentStatus": "Behandlingsstatus",

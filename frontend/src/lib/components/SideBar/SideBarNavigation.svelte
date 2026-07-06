@@ -8,33 +8,50 @@
 	import { URL_MODEL_MAP } from '$lib/utils/crud';
 	import { driverInstance } from '$lib/utils/stores';
 
-	const user = page.data.user;
+	const user = $derived(page.data.user);
+	// focus_folder_id is echoed by current-user, so it is always in sync with
+	// the (possibly focus-scoped) permissions of the same payload
+	const focusActive = $derived(Boolean(user?.focus_folder_id));
+	const rootPermissions = $derived(
+		new Set<string>(user?.domain_permissions?.[user?.root_folder_id] ?? [])
+	);
 
-	const items = navData.items
-		.map((item) => {
-			// Check and filter the sub-items based on user permissions
-			const filteredSubItems = item.items.filter((subItem) => {
-				if (subItem.exclude) {
-					return user?.roles?.some((role: string) => !subItem.exclude.includes(role)) ?? false;
-				} else if (subItem.permissions) {
-					return subItem.permissions?.some(
+	function requiredPermissions(subItem): string[] | null {
+		if (subItem.permissions) return subItem.permissions;
+		const segment = subItem.href.split('/')[1];
+		if (Object.hasOwn(URL_MODEL_MAP, segment)) {
+			return [`view_${URL_MODEL_MAP[segment].name}`];
+		}
+		return null;
+	}
+
+	const navItems = $derived.by(() =>
+		navData.items
+			.map((item) => {
+				// Check and filter the sub-items based on user permissions
+				const filteredSubItems = item.items.filter((subItem) => {
+					if (subItem.exclude) {
+						return user?.roles?.some((role: string) => !subItem.exclude.includes(role)) ?? false;
+					}
+					const required = requiredPermissions(subItem);
+					if (!required) return false;
+					// Entries managing root-homed objects (users, libraries, settings...)
+					// are unreachable while focused on a domain: hide them
+					if (subItem.scope === 'global' && focusActive) {
+						return required.some((permission) => rootPermissions.has(permission));
+					}
+					return required.some(
 						(permission) => user?.permissions && Object.hasOwn(user.permissions, permission)
 					);
-				} else if (Object.hasOwn(URL_MODEL_MAP, subItem.href.split('/')[1])) {
-					const model = URL_MODEL_MAP[subItem.href.split('/')[1]];
-					const canViewObject =
-						user?.permissions && Object.hasOwn(user.permissions, `view_${model.name}`);
-					return canViewObject;
-				}
-				return false;
-			});
+				});
 
-			return {
-				...item,
-				items: filteredSubItems
-			};
-		})
-		.filter((item) => item.items.length > 0); // Filter out items with no sub-items
+				return {
+					...item,
+					items: filteredSubItems
+				};
+			})
+			.filter((item) => item.items.length > 0)
+	); // Filter out items with no sub-items
 
 	import { lastAccordionItem } from '$lib/utils/stores';
 	interface Props {
@@ -58,7 +75,7 @@
 		collapsible
 		class="space-y-4"
 	>
-		{#each items as item}
+		{#each navItems as item}
 			{#if sideBarVisibleItems && sideBarVisibleItems[item.name] !== false}
 				<Accordion.Item value={item.name} id={item.name.toLowerCase().replace(' ', '-')}>
 					<Accordion.ItemTrigger class="flex w-full items-center cursor-pointer">

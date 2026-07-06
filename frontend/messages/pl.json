@@ -185,6 +185,7 @@
 	"autoSync": "Automatyczna codzienna synchronizacja z akcjami",
 	"autoSyncHelpText": "Po włączeniu zadanie będzie automatycznie synchronizować akcje codziennie. Zablokowane oceny są pomijane.",
 	"clearFocus": "Wyczyść fokus",
+	"actionBlockedByFocus": "Może to być spowodowane aktywnym fokusem. Wyczyść fokus i spróbuj ponownie.",
 	"noDomainsAvailable": "Brak dostępnych domen",
 	"urn": "URN",
 	"treatmentStatus": "Status postępowania",
