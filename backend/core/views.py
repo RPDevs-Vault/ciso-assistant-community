@@ -19651,35 +19651,6 @@ class RequirementAssignmentViewSet(BaseModelViewSet):
             ).distinct()
         return qs
 
-    EDITABLE_STATUSES = ("draft", "in_progress")
-
-    def update(self, request, *args, **kwargs):
-        assignment = self.get_object()
-        if assignment.status not in self.EDITABLE_STATUSES:
-            return Response(
-                {"error": f"Cannot edit assignment in '{assignment.status}' status."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return super().update(request, *args, **kwargs)
-
-    def partial_update(self, request, *args, **kwargs):
-        assignment = self.get_object()
-        if assignment.status not in self.EDITABLE_STATUSES:
-            return Response(
-                {"error": f"Cannot edit assignment in '{assignment.status}' status."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return super().partial_update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        assignment = self.get_object()
-        if assignment.status not in self.EDITABLE_STATUSES:
-            return Response(
-                {"error": f"Cannot delete assignment in '{assignment.status}' status."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return super().destroy(request, *args, **kwargs)
-
     # Valid transitions: (from_status, to_status) → config
     # reviewer_only: respondents are forbidden
     # actor_only: only assigned actors can perform this transition

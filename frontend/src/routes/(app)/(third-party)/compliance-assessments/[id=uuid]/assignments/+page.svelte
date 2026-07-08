@@ -60,11 +60,13 @@
 	// Assignments from server data
 	let assignments = $derived(data.assignments);
 
-	// Track which requirement IDs are already assigned (excluding the one being edited)
+	// Track which requirement IDs are already assigned to another active assignment
+	// (excluding the one being edited, and excluding closed assignments which are
+	// considered finished and no longer reserve their requirements)
 	let assignedRequirementIds = $derived(
 		new Set(
 			assignments
-				.filter((a) => a.id !== editingAssignmentId)
+				.filter((a) => a.id !== editingAssignmentId && a.status !== 'closed')
 				.flatMap((assignment) => assignment.requirement_assessments)
 		)
 	);
@@ -644,11 +646,6 @@
 
 	// Check if there are any draft assignments (for "Activate All" button)
 	let hasDraftAssignments = $derived(assignments.some((a) => a.status === 'draft'));
-
-	// Helper: can edit/delete this assignment?
-	function canModifyAssignment(assignmentStatus: string): boolean {
-		return assignmentStatus === 'draft' || assignmentStatus === 'in_progress';
-	}
 </script>
 
 <div class="flex flex-col space-y-4">
@@ -997,82 +994,73 @@
 
 								<!-- Action bar -->
 								{#if !isReadOnly}
-									{@const hasActions =
-										assignment.status === 'draft' ||
-										assignment.status === 'submitted' ||
-										assignment.status === 'closed' ||
-										canModifyAssignment(assignment.status)}
-									{#if hasActions}
-										<div
-											class="flex flex-wrap items-center gap-1.5 px-3.5 py-2 border-t border-surface-100-900 bg-surface-100-900/50 rounded-b-lg"
+									<div
+										class="flex flex-wrap items-center gap-1.5 px-3.5 py-2 border-t border-surface-100-900 bg-surface-100-900/50 rounded-b-lg"
+									>
+										<!-- Status transitions -->
+										{#if assignment.status === 'draft'}
+											<button
+												class="btn btn-sm preset-filled-warning-500 text-xs"
+												onclick={() => handleSetStatus(assignment.id, 'in_progress')}
+												title={m.activateAssignment()}
+											>
+												<i class="fa-solid fa-play mr-1"></i>
+												{m.activateAssignment()}
+											</button>
+										{/if}
+										{#if assignment.status === 'submitted'}
+											<button
+												class="btn btn-sm preset-filled-success-500 text-xs"
+												onclick={() => handleSetStatus(assignment.id, 'closed')}
+												title={m.closeAssignment()}
+											>
+												<i class="fa-solid fa-check mr-1"></i>
+												{m.closeAssignment()}
+											</button>
+											<button
+												class="btn btn-sm preset-filled-error-500 text-xs"
+												onclick={() => openRequestChangesModal(assignment.id)}
+												title={m.requestChanges()}
+											>
+												<i class="fa-solid fa-rotate-left mr-1"></i>
+												{m.requestChanges()}
+											</button>
+										{/if}
+										{#if assignment.status === 'closed'}
+											<button
+												class="btn btn-sm preset-filled-warning-500 text-xs"
+												onclick={() => handleSetStatus(assignment.id, 'submitted')}
+												title={m.reopenAssignment()}
+											>
+												<i class="fa-solid fa-lock-open mr-1"></i>
+												{m.reopenAssignment()}
+											</button>
+										{/if}
+
+										<div class="flex-1"></div>
+
+										<!-- Edit/Delete always on the right, regardless of status -->
+										<button
+											class="btn btn-sm preset-ghost-surface"
+											onclick={() => startEdit(assignment)}
+											title={m.edit()}
+											disabled={editingAssignmentId !== null}
 										>
-											<!-- Status transitions -->
-											{#if assignment.status === 'draft'}
-												<button
-													class="btn btn-sm preset-filled-warning-500 text-xs"
-													onclick={() => handleSetStatus(assignment.id, 'in_progress')}
-													title={m.activateAssignment()}
-												>
-													<i class="fa-solid fa-play mr-1"></i>
-													{m.activateAssignment()}
-												</button>
+											<i class="fa-solid fa-pen text-xs"></i>
+										</button>
+										<button
+											class="btn btn-sm preset-ghost-error-500"
+											onclick={() => handleDeleteAssignment(assignment.id)}
+											title={m.delete()}
+											disabled={isDeleting === assignment.id || editingAssignmentId !== null}
+										>
+											{#if isDeleting === assignment.id}
+												<i class="fa-solid fa-spinner fa-spin text-xs"></i>
+											{:else}
+												<i class="fa-solid fa-trash text-xs"></i>
 											{/if}
-											{#if assignment.status === 'submitted'}
-												<button
-													class="btn btn-sm preset-filled-success-500 text-xs"
-													onclick={() => handleSetStatus(assignment.id, 'closed')}
-													title={m.closeAssignment()}
-												>
-													<i class="fa-solid fa-check mr-1"></i>
-													{m.closeAssignment()}
-												</button>
-												<button
-													class="btn btn-sm preset-filled-error-500 text-xs"
-													onclick={() => openRequestChangesModal(assignment.id)}
-													title={m.requestChanges()}
-												>
-													<i class="fa-solid fa-rotate-left mr-1"></i>
-													{m.requestChanges()}
-												</button>
-											{/if}
-											{#if assignment.status === 'closed'}
-												<button
-													class="btn btn-sm preset-filled-warning-500 text-xs"
-													onclick={() => handleSetStatus(assignment.id, 'submitted')}
-													title={m.reopenAssignment()}
-												>
-													<i class="fa-solid fa-lock-open mr-1"></i>
-													{m.reopenAssignment()}
-												</button>
-											{/if}
-
-											<div class="flex-1"></div>
-
-											<!-- Edit/Delete always on the right -->
-											{#if canModifyAssignment(assignment.status)}
-												<button
-													class="btn btn-sm preset-ghost-surface"
-													onclick={() => startEdit(assignment)}
-													title={m.edit()}
-													disabled={editingAssignmentId !== null}
-												>
-													<i class="fa-solid fa-pen text-xs"></i>
-												</button>
-												<button
-													class="btn btn-sm preset-ghost-error-500"
-													onclick={() => handleDeleteAssignment(assignment.id)}
-													title={m.delete()}
-													disabled={isDeleting === assignment.id || editingAssignmentId !== null}
-												>
-													{#if isDeleting === assignment.id}
-														<i class="fa-solid fa-spinner fa-spin text-xs"></i>
-													{:else}
-														<i class="fa-solid fa-trash text-xs"></i>
-													{/if}
-												</button>
-											{/if}
-										</div>
-									{/if}
+										</button>
+									</div>
 								{/if}
 							</div>
 						{/each}

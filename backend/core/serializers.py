@@ -4210,7 +4210,7 @@ class RequirementAssignmentWriteSerializer(BaseModelSerializer):
     def validate(self, attrs):
         """
         Validate that requirement assessments belong to the specified compliance assessment
-        and are not already assigned to another assignment.
+        and are not already assigned to another active (non-closed) assignment.
         """
         compliance_assessment = attrs.get(
             "compliance_assessment",
@@ -4228,12 +4228,16 @@ class RequirementAssignmentWriteSerializer(BaseModelSerializer):
                         }
                     )
 
-            # Check that requirement assessments are not already assigned to another assignment
+            # Check that requirement assessments are not already assigned to another
+            # active assignment. Closed assignments are considered finished and no
+            # longer reserve their requirement assessments, so they don't block a
+            # new assignment from being created.
             existing_assignment_ids = (
                 RequirementAssignment.objects.filter(
                     compliance_assessment=compliance_assessment,
                     requirement_assessments__in=requirement_assessments,
                 )
+                .exclude(status=RequirementAssignment.Status.CLOSED)
                 .exclude(id=self.instance.id if self.instance else None)
                 .values_list("id", flat=True)
                 .distinct()
