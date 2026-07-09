@@ -525,7 +525,8 @@ export const LEGAL_BASIS_FILTER: ListViewFilterConfig = {
 export const PROCESSING_NATURE_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
-		optionsEndpoint: 'processing-natures',
+		optionsEndpoint: 'terminologies?field_path=processing.nature&is_visible=true',
+		optionsLabelField: 'translated_name',
 		label: 'nature',
 		browserCache: 'force-cache',
 		multiple: true
@@ -740,10 +741,20 @@ export const QUALIFICATION_FILTER: ListViewFilterConfig = {
 export const PERSONAL_DATA_CATEGORY_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
-		optionsEndpoint: 'personal-data/category',
+		optionsEndpoint: 'terminologies?field_path=personal_data.category&is_visible=true',
+		optionsLabelField: 'translated_name',
+		label: 'category',
+		browserCache: 'force-cache',
+		multiple: true
+	}
+};
+export const DATA_SUBJECT_CATEGORY_FILTER: ListViewFilterConfig = {
+	component: AutocompleteSelect,
+	props: {
+		optionsEndpoint: 'data-subjects/category',
 		optionsLabelField: 'label',
 		optionsValueField: 'value',
-		label: 'category',
+		label: 'dataSubjectCategory',
 		browserCache: 'force-cache',
 		multiple: true
 	}
@@ -2076,6 +2087,7 @@ export const listViewFields = {
 			'status',
 			'startDate',
 			'endDate',
+			'annualExpense',
 			'providerEntity',
 			'beneficiaryEntity',
 			'solutions'
@@ -2087,6 +2099,7 @@ export const listViewFields = {
 			'status',
 			'start_date',
 			'end_date',
+			'annual_expense',
 			'provider_entity',
 			'beneficiary_entity',
 			'solutions'
@@ -2172,6 +2185,10 @@ export const listViewFields = {
 	processings: {
 		head: ['refId', 'name', 'description', 'status', 'processingNature', 'labels', 'folder'],
 		body: ['ref_id', 'name', 'description', 'status', 'nature', 'filtering_labels', 'folder'],
+		optionalFields: {
+			head: ['personalDataCategories', 'dataSubjectCategories', 'updatedAt'],
+			body: ['personal_data_categories', 'data_subject_categories', 'updated_at']
+		},
 		filters: {
 			folder: DOMAIN_FILTER,
 			assigned_to: {
@@ -2185,6 +2202,8 @@ export const listViewFields = {
 			},
 			status: PROCESSING_STATUS_FILTER,
 			nature: PROCESSING_NATURE_FILTER,
+			personal_data__category: PERSONAL_DATA_CATEGORY_FILTER,
+			data_subjects__category: DATA_SUBJECT_CATEGORY_FILTER,
 			filtering_labels: LABELS_FILTER
 		}
 	},
@@ -2866,7 +2885,7 @@ export const listViewFields = {
 	},
 	terminologies: {
 		head: ['field_path', 'name', 'description', 'translations', 'is_visible'],
-		body: ['field_path', 'name', 'description', 'translations', 'is_visible'],
+		body: ['field_path', 'translated_name', 'description', 'translations', 'is_visible'],
 		filters: {
 			field_path: FIELD_PATH_FILTER,
 			builtin: BUILTIN_FILTER,
