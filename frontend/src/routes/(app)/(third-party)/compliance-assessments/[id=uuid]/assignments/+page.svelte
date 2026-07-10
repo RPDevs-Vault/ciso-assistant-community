@@ -315,9 +315,12 @@
 
 	let treeViewNodes = $derived(transformToTreeView(Object.entries(data.tree)));
 
-	// Get checked nodes as array, filtering out already assigned ones
+	// Get checked nodes as array, filtering out ones already assigned elsewhere.
+	// Requirements that belong to the assignment currently being edited are kept even if another assignment also points to them
 	let availableCheckedNodes = $derived(
-		[...$checkedNodesStore].filter((id) => !assignedRequirementIds.has(id))
+		[...$checkedNodesStore].filter(
+			(id) => !assignedRequirementIds.has(id) || $editingRequirementIdsStore.has(id)
+		)
 	);
 
 	// Get all assessable node IDs (for "select all" functionality)
